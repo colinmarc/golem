@@ -74,10 +74,21 @@ const (
   status_code NODE_DEAD = 2
 )
 
+var host string
+var port int
+var cluster_time Time = Time.now()
+var me string = uuid.GenUUID()
+
 var known_nodes = map[string]*Node
 var messages []*Message = make([]*Message)
-var cluster_time Time = Time.now()
-var me = uuid.GenUUID()
+
+var context zmqContext
+
+func init() {
+  cluster_time = Time.now()
+  me = uuid.GenUUID()
+  context, _ = zmq.NewContext()
+}
 
 func NewNode(id string, host string, port int) *Node {
   node = new(Node)
@@ -94,11 +105,14 @@ func NewNode(id string, host string, port int) *Node {
 }
 
 func (node *Node) Monitor() {
-  //create REQ socket
-  for m := range node.to {
-    //send packet, update status from ack
-    //call handleresponse
-    //put resp in channel
+  socket := Context.Socket(zmq.REQ)
+  socket.Connect(fmt.Sprintf("tcp://%s:%d", node.host, node.port)
+
+  for req := range node.to {
+    socket.Send(req.Encode(), 0)
+    //TODO time out, freak out
+    resp, _ := Decode(socket.Recv(0))
+    HandleResponse(resp)
   }
 }
 
@@ -169,8 +183,7 @@ func main() {
 
   go Listener()
 
-  //while true, loop through the finished queue (which contains locks/msgs that have been ok'd)
-  //and execute their actions
+  //wait for a request to be OK'd. Once it has, pop as many OK'd requests as we can
   for range finished_queue {
 
   }
