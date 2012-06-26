@@ -10,16 +10,12 @@ type timestamp int
 type status_code int
 type message_id string
 
-type NodeConnection struct {
-  from chan Message
-  to chan Message
-}
-
 type Node struct {
   id string
   host string
   port int
-  conn NodeConnection
+  to chan Outgoing
+  open_requests map[string](*chan bool)
   status status_code
   last_heard_from Time
 }
@@ -29,6 +25,15 @@ type Signature struct {
   ts timestamp
 }
 
+type Action struct {
+  id string
+  name string
+  msg string
+  done bool
+  sigs []Signature
+}
+
+//Incoming
 type Request struct {
   ts int
   id string
@@ -56,9 +61,12 @@ type Ack struct {
   ts int
 }
 
-type Message interface {
-  Encode() ([]byte, error)
+type Incoming interface {
   Decode([]byte) (error)
+}
+
+type Outgoing interface {
+  Encode() ([]byte, error)
 }
 
 const (
@@ -76,17 +84,23 @@ const (
 
 var host string
 var port int
-var cluster_time Time = Time.now()
-var me string = uuid.GenUUID()
+var cluster_time Time
+var me string
 
-var known_nodes = map[string]*Node
-var messages []*Message = make([]*Message)
+var wake_up chan bool
+var known_nodes map[string]*Node
+var action_queue ActionQueue
 
-var context zmqContext
+var context zmq.zmqContext
 
 func init() {
   cluster_time = Time.now()
   me = uuid.GenUUID()
+
+  wake_up = make(chan int)
+  known_nodes = make(map[string]*Node)
+  action_queue = ActionQueue.new()
+
   context, _ = zmq.NewContext()
 }
 
@@ -95,8 +109,8 @@ func NewNode(id string, host string, port int) *Node {
   node.id = string
   node.host = host
   node.port = port
-  node.conn.to = make(chan Message)
-  node.conn.from = make(chan Message)
+  node.to = make(chan Outgoing)
+  node.open_requests = make(map[string](*chan bool))
 
   known_nodes[id] = node
   go node.Monitor()
@@ -105,62 +119,91 @@ func NewNode(id string, host string, port int) *Node {
 }
 
 func (node *Node) Monitor() {
-  socket := Context.Socket(zmq.REQ)
+  socket := context.Socket(zmq.REQ)
   socket.Connect(fmt.Sprintf("tcp://%s:%d", node.host, node.port)
 
   for req := range node.to {
     socket.Send(req.Encode(), 0)
+
     //TODO time out, freak out
-    resp, _ := Decode(socket.Recv(0))
-    HandleResponse(resp)
+    //stuff to do when we freak out:
+    //set state to NODE_DOWN
+    //close any open requests
+
+    resp, _ := socket.Recv(0)
+    ack = Ack.new()
+    _ = ack.Decode(resp)
+    //TODO error handling
+    //update timestamp state
   }
 }
 
-func (node *Node) SendRequest(r Request, success chan bool) {
+func (node *Node) SendRequest(r Request, success *chan bool) {
 {
-  node.conn.to<-p
-  if <-node.conn.from == nil {
-    success<-false
-  }
+  node.to<-r
 
-  //wait for the response somehow
+  response := make(chan bool)
+  node.open_requests[r.id] = response
+  //wait for said response
+  <-response
+
   success<-true
 }
 
 func HandleResponse(r Response) {
-  //update state, mostly
+  //update timestamp state
+  //copy sigs on to open_request
+  //update last_heard_from on nodes (from sigs)
+
+  if success, present := r.from.open_requests[r.id]; present {
+    delete(r.from.open_requests, r.id)
+    success<-true
+  } else {
+    //freak out, or something, I donno
+  }
+}
+
+func AskRandomNeighbor(request r, success *chan bool) {
+  node := PickNeighbor()
+  if node != nil {
+    r = NewRequest(node)
+    go node.SendRequest(r, success)
+    return true
+  }
+
+  return false
 }
 
 func HandleRequest(r Request) {
-  //send requests out to randomly chosen neighbors
-  //put request in finished_queue
-  successes, success := 0, make(chan bool)
+  or := OpenRequest.new()
+  or.sigs = make([]Signature)
+  copy(r.sigs, or.sigs)
+  action_queue.Push(or)
+
+  oks, success := 0, make(chan bool)
   for i := NEEDED_OKS {
-    node := PickNeighbor()
-    if node != nil {
-      r = NewRequest(node)
-      node.SendRequest(r, success)
+    if !AskRandomNeighbor(r, success) {
+      break
     }
   }
+
   for s := range success {
     if s {
-      i += 1
-      if s >= NEEDED_OKS {
+      oks += 1
+      if oks >= NEEDED_OKS {
         break
       }
     } else {
       //pick another neighbor and try again
-      node := PickNeighbor()
-      if node != nil {
-        r := NewRequest(node)
-        node.SendRequest(r, success)
-      } else {
+      if !AskRandomNeighbor(r, success) {
         //not enough neigbors. break
-        //TODO: check for quorum
         break
       }
     }
   }
+
+  r.done = true
+  wake_up<-true
 }
 
 func Listener() {
@@ -168,13 +211,14 @@ func Listener() {
 
   for {
     //read messages off of REP socket
+    //send ack
     //find correct node
     //update node status
     //spawn handler 
   }
 
   //update gossip and cluster time
-  //on a request, every node should = req.signers + response.signers + me
+  //on a request, every node should be in (req.signers + response.signers + me)
 }
 
 func main() {
@@ -184,8 +228,8 @@ func main() {
   go Listener()
 
   //wait for a request to be OK'd. Once it has, pop as many OK'd requests as we can
-  for range finished_queue {
-
+  //but only execute them if we have a quorum. otherwise, re-open them
+  for range wake_up {
   }
 }
 
