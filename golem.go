@@ -136,6 +136,13 @@ func (node *Node) Monitor() {
   }
 }
 
+func (node *Node) Disenfranchise() {
+    //stuff to do when we freak out:
+    //set state to NODE_DOWN
+    //close any open requests
+    // node down event? (for locks, to release open ones)
+}
+
 func (node *Node) SendRequest(r Request, success *chan bool) {
 {
   node.to<-r
