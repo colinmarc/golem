@@ -25,7 +25,7 @@ type Signature struct {
   ts timestamp
 }
 
-type Action struct {
+type OpenRequest struct {
   id string
   name string
   msg string
@@ -34,6 +34,7 @@ type Action struct {
 }
 
 //Incoming
+//TODO rename to question and answer? or something
 type Request struct {
   ts int
   id string
@@ -82,26 +83,29 @@ const (
   status_code NODE_DEAD = 2
 )
 
-var host string
-var port int
-var cluster_time Time
-var me string
+type Golem struct {
+  host string
+  port int
+  cluster_time Time
+  me string
 
-var wake_up chan bool
-var known_nodes map[string]*Node
-var action_queue ActionQueue
+  wake_up chan bool
+  known_nodes map[string]*Node
+  open_request_queue OpenRequestQueue
 
-var context zmq.zmqContext
+  zcontext zmq.zmqContext
+}
 
-func init() {
-  cluster_time = Time.now()
-  me = uuid.GenUUID()
+func Instance() {
+  g = Golem.new()
+  g.cluster_time = Time.now()
+  g.me = uuid.GenUUID()
 
-  wake_up = make(chan int)
-  known_nodes = make(map[string]*Node)
-  action_queue = ActionQueue.new()
+  g.wake_up = make(chan int)
+  g.known_nodes = make(map[string]*Node)
+  g.request_queue = RequestQueue.new()
 
-  context, _ = zmq.NewContext()
+  g.zcontext, _ = zmq.NewContext()
 }
 
 func NewNode(id string, host string, port int) *Node {
@@ -112,14 +116,27 @@ func NewNode(id string, host string, port int) *Node {
   node.to = make(chan Outgoing)
   node.open_requests = make(map[string](*chan bool))
 
+  //TODO move these out
   known_nodes[id] = node
   go node.Monitor()
 
   return node
 }
 
-func (node *Node) Monitor() {
-  socket := context.Socket(zmq.REQ)
+func (node *Node) SendRequest(r Request, success *chan bool) {
+  node.to<-r
+
+  //would some other multiplexing model suit better?
+  response := make(chan bool)
+  node.open_requests[r.id] = response
+  //wait for said response
+  <-response
+
+  success<-true
+}
+
+func (g *Golem) MonitorNode(node *Node) {
+  socket := gzcontext.Socket(zmq.REQ)
   socket.Connect(fmt.Sprintf("tcp://%s:%d", node.host, node.port))
   socket.setSockOptString(zmq.IDENTITY, me)
 
@@ -136,37 +153,29 @@ func (node *Node) Monitor() {
   }
 }
 
-func (node *Node) Disenfranchise() {
+func (g *Golem) DisenfranchiseNode(node *Node) {
     //stuff to do when we freak out:
     //set state to NODE_DOWN
     //close any open requests
     // node down event? (for locks, to release open ones)
 }
 
-func (node *Node) SendRequest(r Request, success *chan bool) {
-{
-  node.to<-r
+func (g *Golem) AskRandomNode(request r, success *chan bool) {
+  //TODO pick neighbor
+  node := nil
 
-  response := make(chan bool)
-  node.open_requests[r.id] = response
-  //wait for said response
-  <-response
-
-  success<-true
-}
-
-func AskRandomNeighbor(request r, success *chan bool) {
-  node := PickNeighbor()
-  if node != nil {
-    r = NewRequest(node)
-    go node.SendRequest(r, success)
-    return true
+  if node == nil {
+    return false
   }
 
-  return false
+  r = NewRequest(r, node)
+  go node.SendRequest(r, success)
+  return true
 }
 
-func HandleRequest(r Request) {
+func (g *Golem) HandleRequest(r Request) {
+  //update timestamp state, gossip
+
   or := OpenRequest.new()
   or.sigs = make([]Signature)
   copy(r.sigs, or.sigs)
@@ -187,7 +196,7 @@ func HandleRequest(r Request) {
       }
     } else {
       //pick another neighbor and try again
-      if !AskRandomNeighbor(r, success) {
+      if !g.AskRandomNeighbor(r, success) {
         //not enough neigbors. break
         break
       }
@@ -198,8 +207,8 @@ func HandleRequest(r Request) {
   wake_up<-true
 }
 
-func HandleResponse(r Response) {
-  //update timestamp state
+func (g *Golem) HandleResponse(r Response) {
+  //update timestamp state, gossip
   //copy sigs on to open_request
   //update last_heard_from on nodes (from sigs)
 
@@ -211,8 +220,8 @@ func HandleResponse(r Response) {
   }
 }
 
-func Listener() {
-  socket = context.Socket(zmq.REP)
+func (g *Golem) Listen() {
+  socket = g.zcontext.Socket(zmq.REP)
   socket.Connect(fmt.Sprintf("tcp://%s:%d", host, port))
   socket.setSockOptString(zmq.IDENTITY, me)
 
@@ -231,43 +240,45 @@ func Listener() {
       //update node status and time
     case "bye"
       //what is a bye?
+      //todo
     }
 
   }
 }
 
-func Logger() {
+func Log() {
 
 }
 
-func main() {
-  //parse args
+func (g *Golem) start() {
   //start logger
 
-  go Logger()
-  go Listener()
+  go g.Log()
+  go g.Listen()
 
   //wait for a request to be OK'd. Once it has, pop as many OK'd requests as we can
   //but only execute them if we have a quorum. otherwise, re-open them
   for range wake_up {
     for {
-      if !ActionQueue.peek().done {
+      if !g.request_queue.peek().done {
         break
       }
 
-      action := ActionQueue.pop()
+      req := g.request_queue.pop()
 
       //check for quorum
-      if len(action.sigs)*2 <= len(known_hosts) {
-        action.Reopen()
+      if len(req.sigs)*2 <= len(g.known_hosts) {
+        req.Reopen()
         continue
       }
 
-      action.Execute()
+      req.action.Execute()
     }
   }
 }
 
 //other todos
-//turn into instance model
 //logging/verbosity
+//encode and decode
+//action interface
+// -serialize, deserialize, execute
