@@ -155,19 +155,6 @@ func (node *Node) SendRequest(r Request, success *chan bool) {
   success<-true
 }
 
-func HandleResponse(r Response) {
-  //update timestamp state
-  //copy sigs on to open_request
-  //update last_heard_from on nodes (from sigs)
-
-  if success, present := r.from.open_requests[r.id]; present {
-    delete(r.from.open_requests, r.id)
-    success<-true
-  } else {
-    //freak out, or something, I donno
-  }
-}
-
 func AskRandomNeighbor(request r, success *chan bool) {
   node := PickNeighbor()
   if node != nil {
@@ -209,6 +196,19 @@ func HandleRequest(r Request) {
 
   r.done = true
   wake_up<-true
+}
+
+func HandleResponse(r Response) {
+  //update timestamp state
+  //copy sigs on to open_request
+  //update last_heard_from on nodes (from sigs)
+
+  if success, present := r.from.open_requests[r.id]; present {
+    delete(r.from.open_requests, r.id)
+    success<-true
+  } else {
+    //freak out, or something, I donno
+  }
 }
 
 func Listener() {
