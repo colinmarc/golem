@@ -212,14 +212,27 @@ func HandleResponse(r Response) {
 }
 
 func Listener() {
-  //create REP socket
+  socket = context.Socket(zmq.REP)
+  socket.Connect(fmt.Sprintf("tcp://%s:%d", host, port))
+  socket.setSockOptString(zmq.IDENTITY, me)
 
   for {
-    //read messages off of REP socket
-    //send ack
-    //find correct node
-    //update node status
-    //spawn handler 
+    //TODO error handling
+    msg, _ := socket.Recv(0)
+    socket.Send(newAck(), 0)
+
+    switch msg_type = DetermineMessageType(msg); msg_type {
+    case "request":
+      req := Request.Decode(msg)
+      //update node status and time
+
+      HandleRequest(req)
+    case "ping":
+      //update node status and time
+    case "bye"
+      //what is a bye?
+    }
+
   }
 
   //update gossip and cluster time
