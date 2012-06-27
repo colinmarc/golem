@@ -234,20 +234,40 @@ func Listener() {
     }
 
   }
+}
 
-  //update gossip and cluster time
-  //on a request, every node should be in (req.signers + response.signers + me)
+func Logger() {
+
 }
 
 func main() {
   //parse args
   //start logger
 
+  go Logger()
   go Listener()
 
   //wait for a request to be OK'd. Once it has, pop as many OK'd requests as we can
   //but only execute them if we have a quorum. otherwise, re-open them
   for range wake_up {
+    for {
+      if !ActionQueue.peek().done {
+        break
+      }
+
+      action := ActionQueue.pop()
+
+      //check for quorum
+      if len(action.sigs)*2 <= len(known_hosts) {
+        action.Reopen()
+        continue
+      }
+
+      action.Execute()
+    }
   }
 }
 
+//other todos
+//turn into instance model
+//logging/verbosity
