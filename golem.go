@@ -120,15 +120,13 @@ func NewNode(id string, host string, port int) *Node {
 
 func (node *Node) Monitor() {
   socket := context.Socket(zmq.REQ)
-  socket.Connect(fmt.Sprintf("tcp://%s:%d", node.host, node.port)
+  socket.Connect(fmt.Sprintf("tcp://%s:%d", node.host, node.port))
+  socket.setSockOptString(zmq.IDENTITY, me)
 
   for req := range node.to {
     socket.Send(req.Encode(), 0)
 
     //TODO time out, freak out
-    //stuff to do when we freak out:
-    //set state to NODE_DOWN
-    //close any open requests
 
     resp, _ := socket.Recv(0)
     ack = Ack.new()
